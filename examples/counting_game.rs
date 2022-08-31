@@ -1,15 +1,16 @@
 extern crate mcts;
 
-use mcts::*;
-use mcts::tree_policy::*;
 use mcts::transposition_table::*;
+use mcts::tree_policy::*;
+use mcts::*;
 
 #[derive(Clone)]
 struct CountingGame(i64);
 
 #[derive(Clone, Debug)]
 enum Move {
-    Add, Sub
+    Add,
+    Sub,
 }
 
 impl GameState for CountingGame {
@@ -49,9 +50,12 @@ struct MyEvaluator;
 impl Evaluator<MyMCTS> for MyEvaluator {
     type StateEvaluation = i64;
 
-    fn evaluate_new_state(&self, state: &CountingGame, moves: &Vec<Move>,
-        _: Option<SearchHandle<MyMCTS>>)
-        -> (Vec<()>, i64) {
+    fn evaluate_new_state(
+        &self,
+        state: &CountingGame,
+        moves: &Vec<Move>,
+        _: Option<SearchHandle<MyMCTS>>,
+    ) -> (Vec<()>, i64) {
         (vec![(); moves.len()], state.0)
     }
 
@@ -59,7 +63,12 @@ impl Evaluator<MyMCTS> for MyEvaluator {
         *evaln
     }
 
-    fn evaluate_existing_state(&self, _: &CountingGame,  evaln: &i64, _: SearchHandle<MyMCTS>) -> i64 {
+    fn evaluate_existing_state(
+        &self,
+        _: &CountingGame,
+        evaln: &i64,
+        _: SearchHandle<MyMCTS>,
+    ) -> i64 {
         *evaln
     }
 }
@@ -82,10 +91,19 @@ impl MCTS for MyMCTS {
 
 fn main() {
     let game = CountingGame(0);
-    let mut mcts = MCTSManager::new(game, MyMCTS, MyEvaluator, UCTPolicy::new(5.0),
-        ApproxTable::new(1024));
+    let mut mcts = MCTSManager::new(
+        game,
+        MyMCTS,
+        MyEvaluator,
+        UCTPolicy::new(5.0),
+        ApproxTable::new(1024),
+    );
     mcts.playout_n(100000);
-    let pv: Vec<_> = mcts.principal_variation_states(10).into_iter().map(|x| x.0).collect();
+    let pv: Vec<_> = mcts
+        .principal_variation_states(10)
+        .into_iter()
+        .map(|x| x.0)
+        .collect();
     println!("Principal variation: {:?}", pv);
     println!("Evaluation of moves:");
     mcts.tree().debug_moves();

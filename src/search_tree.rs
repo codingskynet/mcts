@@ -2,13 +2,13 @@
 
 use std;
 
-use atomics::*;
 use super::*;
-use std::sync::Mutex;
-use std::ptr::{null, null_mut};
+use atomics::*;
 use smallvec::SmallVec;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
+use std::ptr::{null, null_mut};
+use std::sync::Mutex;
 
 use tree_policy::TreePolicy;
 
@@ -50,8 +50,7 @@ pub struct SearchNode<Spec: MCTS> {
 }
 
 impl<Spec: MCTS> SearchNode<Spec> {
-    fn new(moves: Vec<MoveInfo<Spec>>,
-            evaln: StateEvaluation<Spec>) -> Self {
+    fn new(moves: Vec<MoveInfo<Spec>>, evaln: StateEvaluation<Spec>) -> Self {
         Self {
             moves,
             data: Default::default(),
@@ -93,12 +92,15 @@ impl<Spec: MCTS> MoveInfo<Spec> {
         if ptr == null_mut() {
             None
         } else {
-            unsafe {Some(NodeHandle {node: &*ptr})}
+            unsafe { Some(NodeHandle { node: &*ptr }) }
         }
     }
 }
 
-impl<Spec: MCTS> Display for MoveInfo<Spec> where Move<Spec>: Display {
+impl<Spec: MCTS> Display for MoveInfo<Spec>
+where
+    Move<Spec>: Display,
+{
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let own_str = if self.owned.load(Ordering::Relaxed) {
             ""
@@ -106,19 +108,25 @@ impl<Spec: MCTS> Display for MoveInfo<Spec> where Move<Spec>: Display {
             " [child pointer is alias]"
         };
         if self.visits() == 0 {
-            write!(f, "{} [0 visits]{}",
-                self.mov,
-                own_str)
+            write!(f, "{} [0 visits]{}", self.mov, own_str)
         } else {
-            write!(f, "{} [{} visit{}] [{} avg reward]{}",
-                self.mov, self.visits(), if self.visits() == 1 {""} else {"s"},
+            write!(
+                f,
+                "{} [{} visit{}] [{} avg reward]{}",
+                self.mov,
+                self.visits(),
+                if self.visits() == 1 { "" } else { "s" },
                 self.sum_rewards() as f64 / self.visits() as f64,
-                own_str)
+                own_str
+            )
         }
     }
 }
 
-impl<Spec: MCTS> Debug for MoveInfo<Spec> where Move<Spec>: Debug {
+impl<Spec: MCTS> Debug for MoveInfo<Spec>
+where
+    Move<Spec>: Debug,
+{
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let own_str = if self.owned.load(Ordering::Relaxed) {
             ""
@@ -126,14 +134,17 @@ impl<Spec: MCTS> Debug for MoveInfo<Spec> where Move<Spec>: Debug {
             " [child pointer is alias]"
         };
         if self.visits() == 0 {
-            write!(f, "{:?} [0 visits]{}",
-                self.mov,
-                own_str)
+            write!(f, "{:?} [0 visits]{}", self.mov, own_str)
         } else {
-            write!(f, "{:?} [{} visit{}] [{} avg reward]{}",
-                self.mov, self.visits(), if self.visits() == 1 {""} else {"s"},
+            write!(
+                f,
+                "{:?} [{} visit{}] [{} avg reward]{}",
+                self.mov,
+                self.visits(),
+                if self.visits() == 1 { "" } else { "s" },
                 self.sum_rewards() as f64 / self.visits() as f64,
-                own_str)
+                own_str
+            )
         }
     }
 }
@@ -152,12 +163,17 @@ impl<Spec: MCTS> Drop for MoveInfo<Spec> {
     }
 }
 
-fn create_node<Spec: MCTS>(eval: &Spec::Eval, policy: &Spec::TreePolicy, state: &Spec::State,
-        handle: Option<SearchHandle<Spec>>) -> SearchNode<Spec> {
+fn create_node<Spec: MCTS>(
+    eval: &Spec::Eval,
+    policy: &Spec::TreePolicy,
+    state: &Spec::State,
+    handle: Option<SearchHandle<Spec>>,
+) -> SearchNode<Spec> {
     let moves = state.available_moves();
     let (move_eval, state_eval) = eval.evaluate_new_state(&state, &moves, handle);
     policy.validate_evaluations(&move_eval);
-    let moves = moves.into_iter()
+    let moves = moves
+        .into_iter()
         .zip(move_eval.into_iter())
         .map(|(m, e)| MoveInfo::new(m, e))
         .collect();
@@ -169,8 +185,13 @@ fn is_cycle<T>(past: &[&T], current: &T) -> bool {
 }
 
 impl<Spec: MCTS> SearchTree<Spec> {
-    pub fn new(state: Spec::State, manager: Spec, tree_policy: Spec::TreePolicy, eval: Spec::Eval,
-            table: Spec::TranspositionTable) -> Self {
+    pub fn new(
+        state: Spec::State,
+        manager: Spec,
+        tree_policy: Spec::TreePolicy,
+        eval: Spec::Eval,
+        table: Spec::TranspositionTable,
+    ) -> Self {
         let root_node = create_node(&eval, &tree_policy, &state, None);
         Self {
             root_state: state,
@@ -188,7 +209,13 @@ impl<Spec: MCTS> SearchTree<Spec> {
     }
 
     pub fn reset(self) -> Self {
-        Self::new(self.root_state, self.manager, self.tree_policy, self.eval, self.table)
+        Self::new(
+            self.root_state,
+            self.manager,
+            self.tree_policy,
+            self.eval,
+            self.table,
+        )
     }
 
     pub fn spec(&self) -> &Spec {
@@ -219,7 +246,9 @@ impl<Spec: MCTS> SearchTree<Spec> {
             if path.len() >= self.manager.max_playout_length() {
                 break;
             }
-            let choice = self.tree_policy.choose_child(node.moves.iter(), self.make_handle(node, tld));
+            let choice = self
+                .tree_policy
+                .choose_child(node.moves.iter(), self.make_handle(node, tld));
             choice.stats.down(&self.manager);
             players.push(state.current_player());
             path.push(choice);
@@ -232,71 +261,117 @@ impl<Spec: MCTS> SearchTree<Spec> {
             did_we_create = new_did_we_create;
             match self.manager.cycle_behaviour() {
                 CycleBehaviour::Ignore => (),
-                CycleBehaviour::PanicWhenCycleDetected => if is_cycle(&node_path, node) {
-                    panic!("cycle detected! you should do one of the following:\n- make states acyclic\n- remove transposition table\n- change cycle_behaviour()");
-                },
-                CycleBehaviour::UseCurrentEvalWhenCycleDetected => if is_cycle(&node_path, node) {
-                    break;
-                },
-                CycleBehaviour::UseThisEvalWhenCycleDetected(e) => if is_cycle(&node_path, node) {
-                    self.finish_playout(&path, &node_path, &players, tld, &e);
-                    return true;
-                },
+                CycleBehaviour::PanicWhenCycleDetected => {
+                    if is_cycle(&node_path, node) {
+                        panic!("cycle detected! you should do one of the following:\n- make states acyclic\n- remove transposition table\n- change cycle_behaviour()");
+                    }
+                }
+                CycleBehaviour::UseCurrentEvalWhenCycleDetected => {
+                    if is_cycle(&node_path, node) {
+                        break;
+                    }
+                }
+                CycleBehaviour::UseThisEvalWhenCycleDetected(e) => {
+                    if is_cycle(&node_path, node) {
+                        self.finish_playout(&path, &node_path, &players, tld, &e);
+                        return true;
+                    }
+                }
             };
             node_path.push(node);
             node.stats.down(&self.manager);
             if node.stats.visits.load(Ordering::Relaxed) as u64
-                    <= self.manager.visits_before_expansion() {
+                <= self.manager.visits_before_expansion()
+            {
                 break;
             }
         }
         let new_evaln = if did_we_create {
             None
         } else {
-            Some(self.eval.evaluate_existing_state(&state, &node.evaln, self.make_handle(node, tld)))
+            Some(self.eval.evaluate_existing_state(
+                &state,
+                &node.evaln,
+                self.make_handle(node, tld),
+            ))
         };
         let evaln = new_evaln.as_ref().unwrap_or(&node.evaln);
         self.finish_playout(&path, &node_path, &players, tld, evaln);
         true
     }
 
-    fn descend<'a, 'b>(&'a self, state: &Spec::State, choice: &MoveInfo<Spec>,
-            current_node: &'b SearchNode<Spec>, tld: &'b mut ThreadData<Spec>)
-            -> (&'a SearchNode<Spec>, bool) {
+    fn descend<'a, 'b>(
+        &'a self,
+        state: &Spec::State,
+        choice: &MoveInfo<Spec>,
+        current_node: &'b SearchNode<Spec>,
+        tld: &'b mut ThreadData<Spec>,
+    ) -> (&'a SearchNode<Spec>, bool) {
         let child = choice.child.load(Ordering::Relaxed) as *const _;
         if child != null() {
             return unsafe { (&*child, false) };
         }
-        if let Some(node) = self.table.lookup(state, self.make_handle(current_node, tld)) {
-            let child = choice.child.compare_and_swap(
+        if let Some(node) = self
+            .table
+            .lookup(state, self.make_handle(current_node, tld))
+        {
+            let child = match choice.child.compare_exchange(
                 null_mut(),
                 node as *const _ as *mut _,
-                Ordering::Relaxed) as *const _;
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(val) => val,
+                Err(val) => val,
+            } as *const _;
+
             if child == null() {
-                self.transposition_table_hits.fetch_add(1, Ordering::Relaxed);
+                self.transposition_table_hits
+                    .fetch_add(1, Ordering::Relaxed);
                 return (node, false);
             } else {
                 return unsafe { (&*child, false) };
             }
         }
-        let created = create_node(&self.eval, &self.tree_policy, state, Some(self.make_handle(current_node, tld)));
+        let created = create_node(
+            &self.eval,
+            &self.tree_policy,
+            state,
+            Some(self.make_handle(current_node, tld)),
+        );
         let created = Box::into_raw(Box::new(created));
-        let other_child = choice.child.compare_and_swap(
+
+        let other_child = match choice.child.compare_exchange(
             null_mut(),
             created,
-            Ordering::Relaxed);
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(val) => val,
+            Err(val) => val,
+        } as *const _;
+
         if other_child != null_mut() {
-            self.expansion_contention_events.fetch_add(1, Ordering::Relaxed);
+            self.expansion_contention_events
+                .fetch_add(1, Ordering::Relaxed);
             unsafe {
                 Box::from_raw(created);
                 return (&*other_child, false);
             }
         }
-        if let Some(existing) = self.table.insert(state, unsafe {&*created}, self.make_handle(current_node, tld)) {
-            self.delayed_transposition_table_hits.fetch_add(1, Ordering::Relaxed);
+        if let Some(existing) = self.table.insert(
+            state,
+            unsafe { &*created },
+            self.make_handle(current_node, tld),
+        ) {
+            self.delayed_transposition_table_hits
+                .fetch_add(1, Ordering::Relaxed);
             let existing_ptr = existing as *const _ as *mut _;
             choice.child.store(existing_ptr, Ordering::Relaxed);
-            self.orphaned.lock().unwrap().push(unsafe { Box::from_raw(created) });
+            self.orphaned
+                .lock()
+                .unwrap()
+                .push(unsafe { Box::from_raw(created) });
             return (existing, false);
         }
         choice.owned.store(true, Ordering::Relaxed);
@@ -304,30 +379,41 @@ impl<Spec: MCTS> SearchTree<Spec> {
         unsafe { (&*created, true) }
     }
 
-    fn finish_playout(&self,
-            path: &[&MoveInfo<Spec>],
-            node_path: &[&SearchNode<Spec>],
-            players: &[Player<Spec>],
-            tld: &mut ThreadData<Spec>,
-            evaln: &StateEvaluation<Spec>) {
+    fn finish_playout(
+        &self,
+        path: &[&MoveInfo<Spec>],
+        node_path: &[&SearchNode<Spec>],
+        players: &[Player<Spec>],
+        tld: &mut ThreadData<Spec>,
+        evaln: &StateEvaluation<Spec>,
+    ) {
         for ((move_info, player), node) in
-                path.iter()
-                .zip(players.iter())
-                .zip(node_path.iter())
-                .rev() {
+            path.iter().zip(players.iter()).zip(node_path.iter()).rev()
+        {
             let evaln_value = self.eval.interpret_evaluation_for_player(evaln, player);
             node.stats.up(&self.manager, evaln_value);
             move_info.stats.replace(&node.stats);
             unsafe {
-                self.manager.on_backpropagation(&evaln, self.make_handle(&*move_info.child.load(Ordering::Relaxed), tld));
+                self.manager.on_backpropagation(
+                    &evaln,
+                    self.make_handle(&*move_info.child.load(Ordering::Relaxed), tld),
+                );
             }
         }
-        self.manager.on_backpropagation(&evaln, self.make_handle(&self.root_node, tld));
+        self.manager
+            .on_backpropagation(&evaln, self.make_handle(&self.root_node, tld));
     }
 
-    fn make_handle<'a>(&'a self, node: &'a SearchNode<Spec>, tld: &'a mut ThreadData<Spec>)
-            -> SearchHandle<'a, Spec> {
-        SearchHandle {node, tld, manager: &self.manager}
+    fn make_handle<'a>(
+        &'a self,
+        node: &'a SearchNode<Spec>,
+        tld: &'a mut ThreadData<Spec>,
+    ) -> SearchHandle<'a, Spec> {
+        SearchHandle {
+            node,
+            tld,
+            manager: &self.manager,
+        }
     }
 
     pub fn root_state(&self) -> &Spec::State {
@@ -335,7 +421,7 @@ impl<Spec: MCTS> SearchTree<Spec> {
     }
     pub fn root_node(&self) -> NodeHandle<Spec> {
         NodeHandle {
-            node: &self.root_node
+            node: &self.root_node,
         }
     }
 
@@ -359,18 +445,39 @@ impl<Spec: MCTS> SearchTree<Spec> {
 
     pub fn diagnose(&self) -> String {
         let mut s = String::new();
-        s.push_str(&format!("{} nodes\n", thousands_separate(self.num_nodes.load(Ordering::Relaxed))));
-        s.push_str(&format!("{} transposition table hits\n", thousands_separate(self.transposition_table_hits.load(Ordering::Relaxed))));
-        s.push_str(&format!("{} delayed transposition table hits\n", thousands_separate(self.delayed_transposition_table_hits.load(Ordering::Relaxed))));
-        s.push_str(&format!("{} expansion contention events\n", thousands_separate(self.expansion_contention_events.load(Ordering::Relaxed))));
-        s.push_str(&format!("{} orphaned nodes\n", self.orphaned.lock().unwrap().len()));
+        s.push_str(&format!(
+            "{} nodes\n",
+            thousands_separate(self.num_nodes.load(Ordering::Relaxed))
+        ));
+        s.push_str(&format!(
+            "{} transposition table hits\n",
+            thousands_separate(self.transposition_table_hits.load(Ordering::Relaxed))
+        ));
+        s.push_str(&format!(
+            "{} delayed transposition table hits\n",
+            thousands_separate(
+                self.delayed_transposition_table_hits
+                    .load(Ordering::Relaxed)
+            )
+        ));
+        s.push_str(&format!(
+            "{} expansion contention events\n",
+            thousands_separate(self.expansion_contention_events.load(Ordering::Relaxed))
+        ));
+        s.push_str(&format!(
+            "{} orphaned nodes\n",
+            self.orphaned.lock().unwrap().len()
+        ));
         s
     }
 }
 
 pub type MoveInfoHandle<'a, Spec> = &'a MoveInfo<Spec>;
 
-impl<Spec: MCTS> SearchTree<Spec> where Move<Spec>: Debug {
+impl<Spec: MCTS> SearchTree<Spec>
+where
+    Move<Spec>: Debug,
+{
     pub fn debug_moves(&self) {
         let mut moves: Vec<&MoveInfo<Spec>> = self.root_node.moves.iter().collect();
         moves.sort_by_key(|x| -(x.visits() as i64));
@@ -380,7 +487,10 @@ impl<Spec: MCTS> SearchTree<Spec> where Move<Spec>: Debug {
     }
 }
 
-impl<Spec: MCTS> SearchTree<Spec> where Move<Spec>: Display {
+impl<Spec: MCTS> SearchTree<Spec>
+where
+    Move<Spec>: Display,
+{
     pub fn display_moves(&self) {
         let mut moves: Vec<&MoveInfo<Spec>> = self.root_node.moves.iter().collect();
         moves.sort_by_key(|x| -(x.visits() as i64));
@@ -401,7 +511,7 @@ impl<'a, Spec: MCTS> NodeHandle<'a, Spec> {
     }
     pub fn moves(&self) -> Moves<Spec> {
         Moves {
-            iter: self.node.moves.iter()
+            iter: self.node.moves.iter(),
         }
     }
     pub fn into_raw(&self) -> *const () {
@@ -409,7 +519,7 @@ impl<'a, Spec: MCTS> NodeHandle<'a, Spec> {
     }
     pub unsafe fn from_raw(ptr: *const ()) -> Self {
         NodeHandle {
-            node: &*(ptr as *const SearchNode<Spec>)
+            node: &*(ptr as *const SearchNode<Spec>),
         }
     }
 }
@@ -434,7 +544,7 @@ pub struct SearchHandle<'a, Spec: 'a + MCTS> {
 
 impl<'a, Spec: MCTS> SearchHandle<'a, Spec> {
     pub fn node(&self) -> NodeHandle<'a, Spec> {
-        NodeHandle {node: self.node}
+        NodeHandle { node: self.node }
     }
     pub fn thread_data(&mut self) -> &mut ThreadData<Spec> {
         self.tld
@@ -452,28 +562,34 @@ impl NodeStats {
         }
     }
     fn down<Spec: MCTS>(&self, manager: &Spec) {
-        self.sum_evaluations.fetch_sub(manager.virtual_loss() as FakeI64, Ordering::Relaxed);
+        self.sum_evaluations
+            .fetch_sub(manager.virtual_loss() as FakeI64, Ordering::Relaxed);
         self.visits.fetch_add(1, Ordering::Relaxed);
     }
     fn up<Spec: MCTS>(&self, manager: &Spec, evaln: i64) {
         let delta = evaln + manager.virtual_loss();
-        self.sum_evaluations.fetch_add(delta as FakeI64, Ordering::Relaxed);
+        self.sum_evaluations
+            .fetch_add(delta as FakeI64, Ordering::Relaxed);
     }
     fn replace(&self, other: &NodeStats) {
-        self.visits.store(other.visits.load(Ordering::Relaxed), Ordering::Relaxed);
-        self.sum_evaluations.store(other.sum_evaluations.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.visits
+            .store(other.visits.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.sum_evaluations.store(
+            other.sum_evaluations.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
     }
 }
 
 struct IncreaseSentinel<'a> {
     x: &'a AtomicUsize,
-    num_nodes: usize
+    num_nodes: usize,
 }
 
 impl<'a> IncreaseSentinel<'a> {
     fn new(x: &'a AtomicUsize) -> Self {
         let num_nodes = x.fetch_add(1, Ordering::Relaxed);
-        Self {x, num_nodes}
+        Self { x, num_nodes }
     }
 }
 
