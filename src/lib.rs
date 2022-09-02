@@ -122,7 +122,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 pub trait MCTS: Sized + Sync {
-    type State: GameState + Sync;
+    type State: GameState + Sync + Send;
     type Eval: Evaluator<Self>;
     type TreePolicy: TreePolicy<Self>;
     type NodeData: Default + Sync + Send;
@@ -225,6 +225,7 @@ pub trait Evaluator<Spec: MCTS>: Sync {
 }
 
 pub struct MCTSManager<Spec: MCTS> {
+    state: Spec::State,
     search_tree: SearchTree<Spec>,
     // thread local data when we have no asynchronous workers
     single_threaded_tld: Option<ThreadData<Spec>>,
@@ -242,9 +243,10 @@ where
         tree_policy: Spec::TreePolicy,
         table: Spec::TranspositionTable,
     ) -> Self {
-        let search_tree = SearchTree::new(state, manager, tree_policy, eval, table);
+        let search_tree = SearchTree::new(state.clone(), manager, tree_policy, eval, table);
         let single_threaded_tld = None;
         Self {
+            state,
             search_tree,
             single_threaded_tld,
             print_on_playout_error: true,
@@ -261,8 +263,10 @@ where
         if self.single_threaded_tld.is_none() {
             self.single_threaded_tld = Some(Default::default());
         }
-        self.search_tree
-            .playout(self.single_threaded_tld.as_mut().unwrap());
+        self.search_tree.playout(
+            self.state.clone(),
+            self.single_threaded_tld.as_mut().unwrap(),
+        );
     }
 
     pub fn playout_until<Predicate: FnMut() -> bool>(&mut self, mut pred: Predicate) {
@@ -277,68 +281,72 @@ where
         }
     }
 
-    unsafe fn spawn_worker_thread(&self, stop_signal: Arc<AtomicBool>) -> JoinHandle<()> {
-        // ignore the lifetime
-        let search_tree = mem::transmute::<_, &SearchTree<Spec>>(&self.search_tree);
-        let print_on_playout_error = self.print_on_playout_error;
+    // unsafe fn spawn_worker_thread(&self, stop_signal: Arc<AtomicBool>) -> JoinHandle<()> {
+    //     // ignore the lifetime
+    //     let search_tree = mem::transmute::<_, &SearchTree<Spec>>(&self.search_tree);
+    //     let print_on_playout_error = self.print_on_playout_error;
 
-        thread::spawn(move || {
-            let mut tld = Default::default();
-            loop {
-                if stop_signal.load(Ordering::SeqCst) {
-                    break;
-                }
-                if !search_tree.playout(&mut tld) {
-                    if print_on_playout_error {
-                        eprintln!(
-                            "Node limit of {} reached. Halting search.",
-                            search_tree.spec().node_limit()
-                        );
-                    }
-                    break;
-                }
-            }
-        })
-    }
+    //     thread::spawn(move || {
+    //         let mut tld = Default::default();
+    //         loop {
+    //             if stop_signal.load(Ordering::SeqCst) {
+    //                 break;
+    //             }
+    //             if !search_tree.playout(&mut tld) {
+    //                 if print_on_playout_error {
+    //                     eprintln!(
+    //                         "Node limit of {} reached. Halting search.",
+    //                         search_tree.spec().node_limit()
+    //                     );
+    //                 }
+    //                 break;
+    //             }
+    //         }
+    //     })
+    // }
 
-    pub fn playout_parallel_async<'a>(&'a mut self, num_threads: usize) -> AsyncSearch<'a, Spec> {
-        assert!(num_threads != 0);
-        let stop_signal = Arc::new(AtomicBool::new(false));
-        let threads = (0..num_threads)
-            .map(|_| {
-                let stop_signal = stop_signal.clone();
-                unsafe { self.spawn_worker_thread(stop_signal) }
-            })
-            .collect();
-        AsyncSearch {
-            manager: self,
-            stop_signal,
-            threads,
-        }
-    }
+    // pub fn playout_parallel_async<'a>(&'a mut self, num_threads: usize) -> AsyncSearch<'a, Spec> {
+    //     assert!(num_threads != 0);
+    //     let stop_signal = Arc::new(AtomicBool::new(false));
+    //     let threads = (0..num_threads)
+    //         .map(|_| {
+    //             let stop_signal = stop_signal.clone();
+    //             unsafe { self.spawn_worker_thread(stop_signal) }
+    //         })
+    //         .collect();
+    //     AsyncSearch {
+    //         manager: self,
+    //         stop_signal,
+    //         threads,
+    //     }
+    // }
 
-    pub fn into_playout_parallel_async(self, num_threads: usize) -> AsyncSearchOwned<Spec> {
-        assert!(num_threads != 0);
-        let self_box = Box::new(self);
-        let stop_signal = Arc::new(AtomicBool::new(false));
-        let threads = (0..num_threads)
-            .map(|_| {
-                let stop_signal = stop_signal.clone();
-                unsafe { self_box.spawn_worker_thread(stop_signal) }
-            })
-            .collect();
+    // pub fn into_playout_parallel_async(self, num_threads: usize) -> AsyncSearchOwned<Spec> {
+    //     assert!(num_threads != 0);
+    //     let self_box = Box::new(self);
+    //     let stop_signal = Arc::new(AtomicBool::new(false));
+    //     let threads = (0..num_threads)
+    //         .map(|_| {
+    //             let stop_signal = stop_signal.clone();
+    //             unsafe { self_box.spawn_worker_thread(stop_signal) }
+    //         })
+    //         .collect();
 
-        AsyncSearchOwned {
-            manager: Some(self_box),
-            stop_signal,
-            threads,
-        }
-    }
+    //     AsyncSearchOwned {
+    //         manager: Some(self_box),
+    //         stop_signal,
+    //         threads,
+    //     }
+    // }
 
-    pub fn playout_parallel_for(&mut self, duration: Duration, num_threads: usize) {
-        let search = self.playout_parallel_async(num_threads);
-        std::thread::sleep(duration);
-        search.halt();
+    // pub fn playout_parallel_for(&mut self, duration: Duration, num_threads: usize) {
+    //     let search = self.playout_parallel_async(num_threads);
+    //     std::thread::sleep(duration);
+    //     search.halt();
+    // }
+
+    pub fn make_move(&mut self, mov: &Move<Spec>) {
+        self.state.make_move(mov);
     }
 
     pub fn playout_n_parallel(&mut self, n: u32, num_threads: usize) {
@@ -348,6 +356,9 @@ where
         assert!(num_threads != 0);
         let counter = AtomicIsize::new(n as isize);
         let search_tree = &self.search_tree;
+
+        let state = self.state.clone();
+
         crossbeam::scope(|scope| {
             for _ in 0..num_threads {
                 scope.spawn(|_| {
@@ -357,7 +368,7 @@ where
                         if count <= 0 {
                             break;
                         }
-                        search_tree.playout(&mut tld);
+                        search_tree.playout(state.clone(), &mut tld);
                     }
                 });
             }
@@ -397,32 +408,33 @@ where
         self.principal_variation(1).get(0).map(|x| x.clone())
     }
 
-    pub fn perf_test<F>(&mut self, num_threads: usize, mut f: F)
-    where
-        F: FnMut(usize),
-    {
-        let search = self.playout_parallel_async(num_threads);
-        for _ in 0..10 {
-            let n1 = search.manager.search_tree.num_nodes();
-            std::thread::sleep(Duration::from_secs(1));
-            let n2 = search.manager.search_tree.num_nodes();
-            let diff = if n2 > n1 { n2 - n1 } else { 0 };
-            f(diff);
-        }
-    }
+    // pub fn perf_test<F>(&mut self, num_threads: usize, mut f: F)
+    // where
+    //     F: FnMut(usize),
+    // {
+    //     let search = self.playout_parallel_async(num_threads);
+    //     for _ in 0..10 {
+    //         let n1 = search.manager.search_tree.num_nodes();
+    //         std::thread::sleep(Duration::from_secs(1));
+    //         let n2 = search.manager.search_tree.num_nodes();
+    //         let diff = if n2 > n1 { n2 - n1 } else { 0 };
+    //         f(diff);
+    //     }
+    // }
 
-    pub fn perf_test_to_stderr(&mut self, num_threads: usize) {
-        self.perf_test(num_threads, |x| {
-            eprintln!("{} nodes/sec", thousands_separate(x))
-        });
-    }
-    pub fn reset(self) -> Self {
-        Self {
-            search_tree: self.search_tree.reset(),
-            print_on_playout_error: self.print_on_playout_error,
-            single_threaded_tld: None,
-        }
-    }
+    // pub fn perf_test_to_stderr(&mut self, num_threads: usize) {
+    //     self.perf_test(num_threads, |x| {
+    //         eprintln!("{} nodes/sec", thousands_separate(x))
+    //     });
+    // }
+
+    // pub fn reset(self) -> Self {
+    //     Self {
+    //         search_tree: self.search_tree.reset(),
+    //         print_on_playout_error: self.print_on_playout_error,
+    //         single_threaded_tld: None,
+    //     }
+    // }
 }
 
 // https://stackoverflow.com/questions/26998485/rust-print-format-number-with-thousand-separator

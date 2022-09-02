@@ -193,6 +193,8 @@ impl<Spec: MCTS> SearchTree<Spec> {
         table: Spec::TranspositionTable,
     ) -> Self {
         let root_node = create_node(&eval, &tree_policy, &state, None);
+        table.insert(&state, &root_node);
+
         Self {
             root_state: state,
             root_node,
@@ -227,18 +229,21 @@ impl<Spec: MCTS> SearchTree<Spec> {
     }
 
     #[inline(never)]
-    pub fn playout(&self, tld: &mut ThreadData<Spec>) -> bool {
+    pub fn playout(&self, mut state: Spec::State, tld: &mut ThreadData<Spec>) -> bool {
         const LARGE_DEPTH: usize = 64;
         let sentinel = IncreaseSentinel::new(&self.num_nodes);
         if sentinel.num_nodes >= self.manager.node_limit() {
             return false;
         }
-        let mut state = self.root_state.clone();
         let mut path: SmallVec<[&MoveInfo<Spec>; LARGE_DEPTH]> = SmallVec::new();
         let mut node_path: SmallVec<[&SearchNode<Spec>; LARGE_DEPTH]> = SmallVec::new();
         let mut players: SmallVec<[Player<Spec>; LARGE_DEPTH]> = SmallVec::new();
         let mut did_we_create = false;
-        let mut node = &self.root_node;
+
+        // let mut state = self.root_state.clone();
+        // let mut node = &self.root_node;
+        let mut node = self.table.lookup(&state).unwrap();
+
         loop {
             if node.moves.len() == 0 {
                 break;
@@ -311,10 +316,7 @@ impl<Spec: MCTS> SearchTree<Spec> {
         if child != null() {
             return unsafe { (&*child, false) };
         }
-        if let Some(node) = self
-            .table
-            .lookup(state, self.make_handle(current_node, tld))
-        {
+        if let Some(node) = self.table.lookup(state) {
             let child = match choice.child.compare_exchange(
                 null_mut(),
                 node as *const _ as *mut _,
@@ -359,11 +361,7 @@ impl<Spec: MCTS> SearchTree<Spec> {
                 return (&*other_child, false);
             }
         }
-        if let Some(existing) = self.table.insert(
-            state,
-            unsafe { &*created },
-            self.make_handle(current_node, tld),
-        ) {
+        if let Some(existing) = self.table.insert(state, unsafe { &*created }) {
             self.delayed_transposition_table_hits
                 .fetch_add(1, Ordering::Relaxed);
             let existing_ptr = existing as *const _ as *mut _;

@@ -93,7 +93,13 @@ impl<Spec: MCTS<TreePolicy = Self>> TreePolicy<Spec> for UCTPolicy {
     where
         MoveIter: Iterator<Item = &'a MoveInfo<Spec>> + Clone,
     {
-        let total_visits = moves.clone().map(|x| x.visits()).sum::<u64>();
+        let total_visits = moves
+            .clone()
+            .map(|x| {
+                println!("{}", x.visits());
+                x.visits()
+            })
+            .sum::<u64>();
         let adjusted_total = (total_visits + 1) as f64;
         let ln_adjusted_total = adjusted_total.ln();
         handle
