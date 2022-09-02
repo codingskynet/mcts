@@ -15,10 +15,10 @@ use tree_policy::TreePolicy;
 /// You're not intended to use this class (use an `MCTSManager` instead),
 /// but you can use it if you want to manage the threads yourself.
 pub struct SearchTree<Spec: MCTS> {
-    root_node: SearchNode<Spec>,
+    root_node: Box<SearchNode<Spec>>,
     root_state: Spec::State,
     tree_policy: Spec::TreePolicy,
-    table: Spec::TranspositionTable,
+    pub table: Spec::TranspositionTable,
     eval: Spec::Eval,
     manager: Spec,
 
@@ -29,6 +29,7 @@ pub struct SearchTree<Spec: MCTS> {
     expansion_contention_events: AtomicUsize,
 }
 
+#[derive(Debug)]
 struct NodeStats {
     visits: AtomicUsize,
     sum_evaluations: AtomicI64,
@@ -42,8 +43,9 @@ pub struct MoveInfo<Spec: MCTS> {
     stats: NodeStats,
 }
 
+#[derive(Debug)]
 pub struct SearchNode<Spec: MCTS> {
-    moves: Vec<MoveInfo<Spec>>,
+    pub moves: Vec<MoveInfo<Spec>>,
     data: Spec::NodeData,
     evaln: StateEvaluation<Spec>,
     stats: NodeStats,
@@ -57,6 +59,29 @@ impl<Spec: MCTS> SearchNode<Spec> {
             evaln,
             stats: NodeStats::new(),
         }
+    }
+
+    pub fn principal_variation(&self, num_moves: usize) -> Vec<MoveInfoHandle<Spec>> {
+        let mut result = Vec::new();
+        let mut crnt = self;
+        while crnt.moves.len() != 0 && result.len() < num_moves {
+            let choice = crnt
+                .moves
+                .iter()
+                .max_by_key(|child| child.visits())
+                .unwrap();
+
+            result.push(choice);
+            let child = choice.child.load(Ordering::SeqCst) as *const SearchNode<Spec>;
+            if child == null() {
+                break;
+            } else {
+                unsafe {
+                    crnt = &*child;
+                }
+            }
+        }
+        result
     }
 }
 
@@ -117,7 +142,7 @@ where
                 self.visits(),
                 if self.visits() == 1 { "" } else { "s" },
                 self.sum_rewards() as f64 / self.visits() as f64,
-                own_str
+                own_str,
             )
         }
     }
@@ -192,11 +217,12 @@ impl<Spec: MCTS> SearchTree<Spec> {
         eval: Spec::Eval,
         table: Spec::TranspositionTable,
     ) -> Self {
-        let root_node = create_node(&eval, &tree_policy, &state, None);
-        table.insert(&state, &root_node);
+        let root_node = Box::new(create_node(&eval, &tree_policy, &state, None));
+
+        table.insert(&state, root_node.as_ref());
 
         Self {
-            root_state: state,
+            root_state: state.clone(),
             root_node,
             manager,
             tree_policy,
@@ -228,6 +254,10 @@ impl<Spec: MCTS> SearchTree<Spec> {
         self.num_nodes.load(Ordering::SeqCst)
     }
 
+    pub fn get_node(&self, state: &Spec::State) -> Option<&SearchNode<Spec>> {
+        self.table.lookup(state)
+    }
+
     #[inline(never)]
     pub fn playout(&self, mut state: Spec::State, tld: &mut ThreadData<Spec>) -> bool {
         const LARGE_DEPTH: usize = 64;
@@ -240,8 +270,6 @@ impl<Spec: MCTS> SearchTree<Spec> {
         let mut players: SmallVec<[Player<Spec>; LARGE_DEPTH]> = SmallVec::new();
         let mut did_we_create = false;
 
-        // let mut state = self.root_state.clone();
-        // let mut node = &self.root_node;
         let mut node = self.table.lookup(&state).unwrap();
 
         loop {
@@ -251,9 +279,11 @@ impl<Spec: MCTS> SearchTree<Spec> {
             if path.len() >= self.manager.max_playout_length() {
                 break;
             }
+
             let choice = self
                 .tree_policy
                 .choose_child(node.moves.iter(), self.make_handle(node, tld));
+
             choice.stats.down(&self.manager);
             players.push(state.current_player());
             path.push(choice);
@@ -305,7 +335,7 @@ impl<Spec: MCTS> SearchTree<Spec> {
         true
     }
 
-    fn descend<'a, 'b>(
+    pub fn descend<'a, 'b>(
         &'a self,
         state: &Spec::State,
         choice: &MoveInfo<Spec>,
@@ -314,9 +344,11 @@ impl<Spec: MCTS> SearchTree<Spec> {
     ) -> (&'a SearchNode<Spec>, bool) {
         let child = choice.child.load(Ordering::Relaxed) as *const _;
         if child != null() {
+            // println!("NOT NULL");
             return unsafe { (&*child, false) };
         }
         if let Some(node) = self.table.lookup(state) {
+            // println!("ALREADY EXISTS");
             let child = match choice.child.compare_exchange(
                 null_mut(),
                 node as *const _ as *mut _,
@@ -372,6 +404,9 @@ impl<Spec: MCTS> SearchTree<Spec> {
                 .push(unsafe { Box::from_raw(created) });
             return (existing, false);
         }
+
+        // println!("CREATED!");
+
         choice.owned.store(true, Ordering::Relaxed);
         self.num_nodes.fetch_add(1, Ordering::Relaxed);
         unsafe { (&*created, true) }
@@ -421,24 +456,6 @@ impl<Spec: MCTS> SearchTree<Spec> {
         NodeHandle {
             node: &self.root_node,
         }
-    }
-
-    pub fn principal_variation(&self, num_moves: usize) -> Vec<MoveInfoHandle<Spec>> {
-        let mut result = Vec::new();
-        let mut crnt = &self.root_node;
-        while crnt.moves.len() != 0 && result.len() < num_moves {
-            let choice = self.manager.select_child_after_search(&crnt.moves);
-            result.push(choice);
-            let child = choice.child.load(Ordering::SeqCst) as *const SearchNode<Spec>;
-            if child == null() {
-                break;
-            } else {
-                unsafe {
-                    crnt = &*child;
-                }
-            }
-        }
-        result
     }
 
     pub fn diagnose(&self) -> String {

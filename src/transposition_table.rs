@@ -153,6 +153,9 @@ where
             return self.lookup(key);
         }
         let my_hash = key.hash();
+
+        // println!("insert: {}", my_hash);
+
         if my_hash == 0 {
             return None;
         }
@@ -189,6 +192,9 @@ where
     }
     fn lookup<'a>(&'a self, key: &Spec::State) -> Option<&'a SearchNode<Spec>> {
         let my_hash = key.hash();
+
+        // println!("lookup: {}", my_hash);
+
         let mut posn = my_hash as usize & self.mask;
         for inc in 1..(PROBE_LIMIT + 1) {
             let entry = unsafe { self.arr.get_unchecked(posn) };

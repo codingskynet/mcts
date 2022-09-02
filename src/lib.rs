@@ -116,16 +116,18 @@ use transposition_table::*;
 use tree_policy::*;
 
 use atomics::*;
-use std::mem;
+use std::fmt::Debug;
+use std::io::Write;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+use std::{io, mem};
 
-pub trait MCTS: Sized + Sync {
-    type State: GameState + Sync + Send;
+pub trait MCTS: Sized + Sync + Debug {
+    type State: GameState + Sync + Send + Debug;
     type Eval: Evaluator<Self>;
     type TreePolicy: TreePolicy<Self>;
-    type NodeData: Default + Sync + Send;
+    type NodeData: Default + Sync + Send + Debug;
     type TranspositionTable: TranspositionTable<Self>;
     type ExtraThreadData;
 
@@ -139,13 +141,6 @@ pub trait MCTS: Sized + Sync {
 
     fn node_limit(&self) -> usize {
         std::usize::MAX
-    }
-
-    fn select_child_after_search<'a>(&self, children: &'a [MoveInfo<Self>]) -> &'a MoveInfo<Self> {
-        children
-            .into_iter()
-            .max_by_key(|child| child.visits())
-            .unwrap()
     }
 
     /// `playout` panics when this length is exceeded. Defaults to one million.
@@ -191,7 +186,7 @@ pub type TreePolicyThreadData<Spec> =
     <<Spec as MCTS>::TreePolicy as TreePolicy<Spec>>::ThreadLocalData;
 
 pub trait GameState: Clone {
-    type Move: Sync + Send + Clone;
+    type Move: Sync + Send + Clone + Debug;
     type Player: Sync;
     type MoveList: std::iter::IntoIterator<Item = Self::Move>;
 
@@ -201,7 +196,7 @@ pub trait GameState: Clone {
 }
 
 pub trait Evaluator<Spec: MCTS>: Sync {
-    type StateEvaluation: Sync + Send;
+    type StateEvaluation: Sync + Send + Debug;
 
     fn evaluate_new_state(
         &self,
@@ -345,11 +340,50 @@ where
     //     search.halt();
     // }
 
-    pub fn make_move(&mut self, mov: &Move<Spec>) {
-        self.state.make_move(mov);
+    pub fn move_best(&mut self) {
+        if self.single_threaded_tld.is_none() {
+            self.single_threaded_tld = Some(Default::default());
+        }
+
+        let parent_search_node = unsafe {
+            mem::transmute::<&SearchNode<Spec>, &SearchNode<Spec>>(self.get_search_node().unwrap())
+        };
+
+        let optimal_move_info = unsafe {
+            mem::transmute::<&MoveInfo<Spec>, &MoveInfo<Spec>>(self.principal_variation_info(1)[0])
+        };
+        let optimal_move = optimal_move_info.get_move().clone();
+
+        self.state.make_move(&optimal_move);
+
+        if self.get_search_node().is_none() {
+            // println!("create node by descending");
+
+            match optimal_move_info.child() {
+                Some(child) => {
+                    // println!("insert already existed");
+                    self.search_tree.table.insert(&self.state, unsafe {
+                        &*(child.into_raw() as *const SearchNode<Spec>)
+                    });
+                }
+                None => {
+                    // println!("child ptr is really none");
+                    let _ = self.search_tree.descend(
+                        &self.state,
+                        optimal_move_info,
+                        parent_search_node,
+                        &mut self.single_threaded_tld.as_mut().unwrap(),
+                    );
+                }
+            }
+        }
     }
 
-    pub fn playout_n_parallel(&mut self, n: u32, num_threads: usize) {
+    pub fn get_search_node(&self) -> Option<&SearchNode<Spec>> {
+        self.search_tree.get_node(&self.state)
+    }
+
+    pub fn playout_n_parallel(&mut self, n: u64, num_threads: usize) {
         if n == 0 {
             return;
         }
@@ -377,11 +411,15 @@ where
     }
 
     pub fn principal_variation_info(&self, num_moves: usize) -> Vec<MoveInfoHandle<Spec>> {
-        self.search_tree.principal_variation(num_moves)
+        let search_node = self.search_tree.get_node(&self.state).unwrap();
+
+        search_node.principal_variation(num_moves)
     }
 
     pub fn principal_variation(&self, num_moves: usize) -> Vec<Move<Spec>> {
-        self.search_tree
+        let search_node = self.search_tree.get_node(&self.state).unwrap();
+
+        search_node
             .principal_variation(num_moves)
             .into_iter()
             .map(|x| x.get_move())
