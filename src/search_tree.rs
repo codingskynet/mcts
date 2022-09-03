@@ -45,6 +45,7 @@ pub struct MoveInfo<Spec: MCTS> {
 
 #[derive(Debug)]
 pub struct SearchNode<Spec: MCTS> {
+    state: Spec::State,
     pub moves: Vec<MoveInfo<Spec>>,
     data: Spec::NodeData,
     evaln: StateEvaluation<Spec>,
@@ -52,36 +53,14 @@ pub struct SearchNode<Spec: MCTS> {
 }
 
 impl<Spec: MCTS> SearchNode<Spec> {
-    fn new(moves: Vec<MoveInfo<Spec>>, evaln: StateEvaluation<Spec>) -> Self {
+    fn new(state: Spec::State, moves: Vec<MoveInfo<Spec>>, evaln: StateEvaluation<Spec>) -> Self {
         Self {
+            state,
             moves,
             data: Default::default(),
             evaln,
             stats: NodeStats::new(),
         }
-    }
-
-    pub fn principal_variation(&self, num_moves: usize) -> Vec<MoveInfoHandle<Spec>> {
-        let mut result = Vec::new();
-        let mut crnt = self;
-        while crnt.moves.len() != 0 && result.len() < num_moves {
-            let choice = crnt
-                .moves
-                .iter()
-                .max_by_key(|child| child.visits())
-                .unwrap();
-
-            result.push(choice);
-            let child = choice.child.load(Ordering::SeqCst) as *const SearchNode<Spec>;
-            if child == null() {
-                break;
-            } else {
-                unsafe {
-                    crnt = &*child;
-                }
-            }
-        }
-        result
     }
 }
 
@@ -202,7 +181,7 @@ fn create_node<Spec: MCTS>(
         .zip(move_eval.into_iter())
         .map(|(m, e)| MoveInfo::new(m, e))
         .collect();
-    SearchNode::new(moves, state_eval)
+    SearchNode::new(state.clone(), moves, state_eval)
 }
 
 fn is_cycle<T>(past: &[&T], current: &T) -> bool {
@@ -273,6 +252,8 @@ impl<Spec: MCTS> SearchTree<Spec> {
         let mut node = self.table.lookup(&state).unwrap();
 
         loop {
+            assert_eq!(state, node.state);
+
             if node.moves.len() == 0 {
                 break;
             }

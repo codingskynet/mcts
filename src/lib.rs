@@ -113,21 +113,19 @@ pub mod transposition_table;
 pub mod tree_policy;
 
 use rand::seq::SliceRandom;
-use rand::{thread_rng, Rng};
+use rand::thread_rng;
 pub use search_tree::*;
 use transposition_table::*;
 use tree_policy::*;
 
 use atomics::*;
 use std::fmt::Debug;
-use std::io::Write;
+use std::mem;
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
-use std::{io, mem};
+use std::thread::JoinHandle;
 
 pub trait MCTS: Sized + Sync + Debug {
-    type State: GameState + Sync + Send + Debug;
+    type State: GameState + Sync + Send + Debug + PartialEq;
     type Eval: Evaluator<Self>;
     type TreePolicy: TreePolicy<Self>;
     type NodeData: Default + Sync + Send + Debug;
@@ -343,6 +341,14 @@ where
     //     search.halt();
     // }
 
+    pub fn best_moves(&self) -> Vec<&MoveInfo<Spec>> {
+        let node = self.get_search_node().unwrap();
+
+        let mut moves = node.moves.iter().collect::<Vec<_>>();
+        moves.sort_by_key(|info| -info.sum_rewards() / info.visits() as i64);
+        moves
+    }
+
     pub fn move_best_random_n(&mut self, n: usize) -> Move<Spec> {
         if self.single_threaded_tld.is_none() {
             self.single_threaded_tld = Some(Default::default());
@@ -354,7 +360,15 @@ where
 
         let mut rng = thread_rng();
         let optimal_move_info = unsafe {
-            let infos = self.principal_variation_info(n);
+            let best_moves = self.best_moves();
+
+            let infos = if best_moves.len() > 10 {
+                &best_moves[0..n]
+            } else {
+                &best_moves
+            };
+
+            // println!("best moves: {:?}", infos);
 
             mem::transmute::<&MoveInfo<Spec>, &MoveInfo<Spec>>(infos.choose(&mut rng).unwrap())
         };
@@ -418,40 +432,36 @@ where
         .unwrap();
     }
 
-    pub fn principal_variation_info(&self, num_moves: usize) -> Vec<MoveInfoHandle<Spec>> {
-        let search_node = self.search_tree.get_node(&self.state).unwrap();
+    // pub fn principal_variation_info(&self, num_moves: usize) -> Vec<MoveInfoHandle<Spec>> {
+    //     let search_node = self.search_tree.get_node(&self.state).unwrap();
 
-        search_node.principal_variation(num_moves)
-    }
+    //     search_node.principal_variation(num_moves)
+    // }
 
-    pub fn principal_variation(&self, num_moves: usize) -> Vec<Move<Spec>> {
-        let search_node = self.search_tree.get_node(&self.state).unwrap();
+    // pub fn principal_variation(&self, num_moves: usize) -> Vec<Move<Spec>> {
+    //     let search_node = self.search_tree.get_node(&self.state).unwrap();
 
-        search_node
-            .principal_variation(num_moves)
-            .into_iter()
-            .map(|x| x.get_move())
-            .map(|x| x.clone())
-            .collect()
-    }
+    //     search_node
+    //         .principal_variation(num_moves)
+    //         .into_iter()
+    //         .map(|x| x.get_move())
+    //         .map(|x| x.clone())
+    //         .collect()
+    // }
 
-    pub fn principal_variation_states(&self, num_moves: usize) -> Vec<Spec::State> {
-        let moves = self.principal_variation(num_moves);
-        let mut states = vec![self.search_tree.root_state().clone()];
-        for mov in moves {
-            let mut state = states[states.len() - 1].clone();
-            state.make_move(&mov);
-            states.push(state);
-        }
-        states
-    }
+    // pub fn principal_variation_states(&self, num_moves: usize) -> Vec<Spec::State> {
+    //     let moves = self.principal_variation(num_moves);
+    //     let mut states = vec![self.search_tree.root_state().clone()];
+    //     for mov in moves {
+    //         let mut state = states[states.len() - 1].clone();
+    //         state.make_move(&mov);
+    //         states.push(state);
+    //     }
+    //     states
+    // }
 
     pub fn tree(&self) -> &SearchTree<Spec> {
         &self.search_tree
-    }
-
-    pub fn best_move(&self) -> Option<Move<Spec>> {
-        self.principal_variation(1).get(0).map(|x| x.clone())
     }
 
     // pub fn perf_test<F>(&mut self, num_threads: usize, mut f: F)
