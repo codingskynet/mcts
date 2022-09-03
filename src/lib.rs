@@ -137,7 +137,7 @@ pub trait MCTS: Sized + Sync + Debug {
     }
 
     fn visits_before_expansion(&self) -> u64 {
-        1
+        0
     }
 
     fn node_limit(&self) -> usize {
@@ -187,7 +187,7 @@ pub type TreePolicyThreadData<Spec> =
     <<Spec as MCTS>::TreePolicy as TreePolicy<Spec>>::ThreadLocalData;
 
 pub trait GameState: Clone {
-    type Move: Sync + Send + Clone + Debug;
+    type Move: Sync + Send + Clone + Debug + PartialEq;
     type Player: Sync;
     type MoveList: std::iter::IntoIterator<Item = Self::Move>;
 
@@ -347,6 +347,46 @@ where
         let mut moves = node.moves.iter().collect::<Vec<_>>();
         moves.sort_by_key(|info| -info.sum_rewards() / info.visits() as i64);
         moves
+    }
+
+    pub fn move_custom(&mut self, mov: Move<Spec>) {
+        if self.single_threaded_tld.is_none() {
+            self.single_threaded_tld = Some(Default::default());
+        }
+
+        let parent_search_node = unsafe {
+            mem::transmute::<&SearchNode<Spec>, &SearchNode<Spec>>(self.get_search_node().unwrap())
+        };
+
+        self.state.make_move(&mov);
+
+        let move_info = parent_search_node
+            .moves
+            .iter()
+            .find(|info| *info.get_move() == mov)
+            .unwrap();
+
+        if self.get_search_node().is_none() {
+            // println!("create node by descending");
+
+            match move_info.child() {
+                Some(child) => {
+                    // println!("insert already existed");
+                    self.search_tree.table.insert(&self.state, unsafe {
+                        &*(child.into_raw() as *const SearchNode<Spec>)
+                    });
+                }
+                None => {
+                    // println!("child ptr is really none");
+                    let _ = self.search_tree.descend(
+                        &self.state,
+                        move_info,
+                        parent_search_node,
+                        &mut self.single_threaded_tld.as_mut().unwrap(),
+                    );
+                }
+            }
+        }
     }
 
     pub fn move_best_random_n(&mut self, n: usize) -> Move<Spec> {
