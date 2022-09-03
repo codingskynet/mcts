@@ -137,7 +137,7 @@ pub trait MCTS: Sized + Sync + Debug {
     }
 
     fn visits_before_expansion(&self) -> u64 {
-        0
+        1
     }
 
     fn node_limit(&self) -> usize {
