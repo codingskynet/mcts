@@ -104,6 +104,7 @@
 //! ```
 
 extern crate crossbeam;
+extern crate rand;
 extern crate smallvec;
 
 mod atomics;
@@ -111,6 +112,8 @@ mod search_tree;
 pub mod transposition_table;
 pub mod tree_policy;
 
+use rand::seq::SliceRandom;
+use rand::{thread_rng, Rng};
 pub use search_tree::*;
 use transposition_table::*;
 use tree_policy::*;
@@ -340,7 +343,7 @@ where
     //     search.halt();
     // }
 
-    pub fn move_best(&mut self) {
+    pub fn move_best_random_n(&mut self, n: usize) -> Move<Spec> {
         if self.single_threaded_tld.is_none() {
             self.single_threaded_tld = Some(Default::default());
         }
@@ -349,8 +352,11 @@ where
             mem::transmute::<&SearchNode<Spec>, &SearchNode<Spec>>(self.get_search_node().unwrap())
         };
 
+        let mut rng = thread_rng();
         let optimal_move_info = unsafe {
-            mem::transmute::<&MoveInfo<Spec>, &MoveInfo<Spec>>(self.principal_variation_info(1)[0])
+            let infos = self.principal_variation_info(n);
+
+            mem::transmute::<&MoveInfo<Spec>, &MoveInfo<Spec>>(infos.choose(&mut rng).unwrap())
         };
         let optimal_move = optimal_move_info.get_move().clone();
 
@@ -377,6 +383,8 @@ where
                 }
             }
         }
+
+        optimal_move
     }
 
     pub fn get_search_node(&self) -> Option<&SearchNode<Spec>> {
@@ -466,13 +474,12 @@ where
     //     });
     // }
 
-    // pub fn reset(self) -> Self {
-    //     Self {
-    //         search_tree: self.search_tree.reset(),
-    //         print_on_playout_error: self.print_on_playout_error,
-    //         single_threaded_tld: None,
-    //     }
-    // }
+    pub fn reset(self, init_state: Spec::State) -> Self {
+        Self {
+            state: init_state,
+            ..self
+        }
+    }
 }
 
 // https://stackoverflow.com/questions/26998485/rust-print-format-number-with-thousand-separator
