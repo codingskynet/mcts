@@ -30,7 +30,7 @@ pub struct SearchTree<Spec: MCTS> {
 }
 
 #[derive(Debug)]
-struct NodeStats {
+pub struct NodeStats {
     visits: AtomicUsize,
     sum_evaluations: AtomicI64,
 }
@@ -49,7 +49,7 @@ pub struct SearchNode<Spec: MCTS> {
     pub moves: Vec<MoveInfo<Spec>>,
     data: Spec::NodeData,
     evaln: StateEvaluation<Spec>,
-    stats: NodeStats,
+    pub stats: NodeStats,
 }
 
 impl<Spec: MCTS> SearchNode<Spec> {
@@ -542,9 +542,11 @@ impl<'a, Spec: MCTS> SearchHandle<'a, Spec> {
     pub fn node(&self) -> NodeHandle<'a, Spec> {
         NodeHandle { node: self.node }
     }
+
     pub fn thread_data(&mut self) -> &mut ThreadData<Spec> {
         self.tld
     }
+
     pub fn mcts(&self) -> &'a Spec {
         self.manager
     }
@@ -557,16 +559,23 @@ impl NodeStats {
             visits: AtomicUsize::new(0),
         }
     }
+
+    pub fn visits(&self) -> u64 {
+        self.visits.load(Ordering::Relaxed) as u64
+    }
+
     fn down<Spec: MCTS>(&self, manager: &Spec) {
         self.sum_evaluations
             .fetch_sub(manager.virtual_loss() as FakeI64, Ordering::Relaxed);
         self.visits.fetch_add(1, Ordering::Relaxed);
     }
+
     fn up<Spec: MCTS>(&self, manager: &Spec, evaln: i64) {
         let delta = evaln + manager.virtual_loss();
         self.sum_evaluations
             .fetch_add(delta as FakeI64, Ordering::Relaxed);
     }
+
     fn replace(&self, other: &NodeStats) {
         self.visits
             .store(other.visits.load(Ordering::Relaxed), Ordering::Relaxed);
